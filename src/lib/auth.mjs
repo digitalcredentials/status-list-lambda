@@ -1,6 +1,6 @@
-// The write endpoints (/allocate, /revoke) are gated by a shared secret in
-// the x-api-key header, configured as the stack's ApiKey parameter. Reading a
-// published list needs no key.
+// /allocate is gated by a shared secret in the x-api-key header, configured
+// as the stack's ApiKey parameter. Reading a published list needs no key, and
+// /revoke is authorized by the revocation token itself.
 export function authorized(event) {
   const provided = Object.entries(event.headers ?? {}).find(
     ([name]) => name.toLowerCase() === "x-api-key"

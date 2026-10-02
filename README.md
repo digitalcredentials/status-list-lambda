@@ -12,7 +12,7 @@ Served at `https://status.lcw-sandbox.org`.
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | POST | `/allocate` | `x-api-key` | Reserve a status position; returns the `credentialStatus` object and a revocation token |
-| POST | `/revoke` | `x-api-key` | Revoke a position by its token; republishes the signed list |
+| POST | `/revoke` | the token | Revoke a position by its token; republishes the signed list |
 | GET | `/{listID}` | none | The published, signed `BitstringStatusListCredential` |
 
 ### `POST /allocate`
@@ -89,6 +89,11 @@ Looks the token up, sets the position's bit, rebuilds the bitstring from the
 table, signs the `BitstringStatusListCredential`, and republishes it to S3.
 Revoking an already-revoked position responds 200 without harm; an unknown
 token is 404.
+
+No api key: the revocation token is itself the bearer capability. It
+authorizes revoking exactly the one position it was generated for, and only
+whoever allocated the position holds it, so clients (e.g. the wallet's batch
+issuer) can call `/revoke` directly without sharing the allocation secret.
 
 ### `GET /{listID}`
 
