@@ -171,13 +171,9 @@ test("allocate: a full list rotates to the next one", async () => {
 
 // --- /revoke
 
-test("revoke: 401 without the api key", async () => {
-  const res = await revoke(event({ headers: {}, body: { revocationToken: "x" } }));
-  assert.equal(res.statusCode, 401);
-});
-
 test("revoke: 400 without a token, 404 for an unknown one", async () => {
-  assert.equal((await revoke(event({ body: {} }))).statusCode, 400);
+  // No api key on /revoke: the token itself is the bearer capability
+  assert.equal((await revoke(event({ headers: {}, body: {} }))).statusCode, 400);
   onDynamo = (command) => {
     assert.ok(command instanceof QueryCommand);
     return { Items: [] };
@@ -222,7 +218,7 @@ test("revoke: sets the bit and republishes the signed list", async () => {
     throw new Error(`unexpected: ${command.constructor.name}`);
   };
 
-  const res = await revoke(event({ body: { revocationToken: "tok" } }));
+  const res = await revoke(event({ headers: {}, body: { revocationToken: "tok" } }));
   assert.equal(res.statusCode, 200);
   const body = JSON.parse(res.body);
   assert.equal(body.revoked, true);

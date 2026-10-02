@@ -140,7 +140,8 @@ Resources:
           - js=import { createRequire } from 'module'; const require = createRequire(import.meta.url);
 
   # POST /revoke: looks the revocation token up, sets the position's bit, and
-  # republishes the signed status list credential.
+  # republishes the signed status list credential. No api key: the token is
+  # itself the bearer capability for its one position.
   RevokeFn:
     Type: AWS::Serverless::Function
     Properties:
@@ -150,7 +151,6 @@ Resources:
       Environment:
         Variables:
           ISSUER_SEED: !Ref IssuerSeed
-          API_KEY: !Ref ApiKey
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref PositionsTable

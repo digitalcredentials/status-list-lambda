@@ -4,7 +4,7 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { publishList, listUrl } from "./lib/publish.mjs";
-import { authorized, parseBody, json } from "./lib/auth.mjs";
+import { parseBody, json } from "./lib/auth.mjs";
 
 const dynamo = new DynamoDBClient({});
 const TABLE_NAME = process.env.TABLE_NAME;
@@ -49,12 +49,11 @@ async function revokedIndexes(listId) {
 
 // POST /revoke {revocationToken} -> flips the position's bit and republishes
 // the signed status list credential. Revoking an already-revoked position is
-// a no-op that still responds 200.
+// a no-op that still responds 200. No api key: the revocation token is itself
+// the bearer capability — it authorizes revoking exactly the one position it
+// was generated for, and only its holder (whoever allocated the position)
+// has it.
 export const lambdaHandler = async (event) => {
-  if (!authorized(event)) {
-    return json(401, { error: "Unauthorized." });
-  }
-
   let token;
   try {
     ({ revocationToken: token } = parseBody(event));
