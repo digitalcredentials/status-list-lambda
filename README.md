@@ -41,6 +41,44 @@ Response:
 Embed `credentialStatus` in the credential being issued, and **store the
 `revocationToken`** — it is the only way to revoke the position later.
 
+#### How allocations stay unique
+
+Each allocated position is one DynamoDB row whose primary key is the pair
+(`listId`, `pos#<index>`), written with
+`ConditionExpression: attribute_not_exists(sk)`. DynamoDB evaluates the
+condition and performs the write as a single atomic operation on the key, so
+when two concurrent allocations draw the same random index, exactly one
+`PutItem` succeeds and the other fails its condition — there is no window in
+which both can claim the position. The loser simply draws a new random index
+and tries again. Uniqueness never depends on the randomness: the random draw
+is only the specification's privacy recommendation; the conditional write is
+the guarantee.
+
+The per-list `allocatedCount` that triggers rotation is maintained with an
+atomic `ADD` after each successful conditional put, so it counts exactly the
+rows that won their condition. Revocation tokens are `crypto.randomUUID()`
+(122 random bits); their uniqueness is probabilistic, which is standard
+practice — a collision is on the order of 2⁻¹²².
+
+#### Why a blind random draw, not a draw from the free positions
+
+Drawing from a freshly computed list of still-available positions would not
+improve correctness: any such list is a snapshot, stale the instant a
+concurrent allocation lands, so the atomic conditional write is still what
+guarantees uniqueness. What it would buy is fewer retries — and the price is
+reading the list's full allocation state (up to 131,072 rows) from DynamoDB
+on every allocate call.
+
+Retries are cheap instead. With random draws over 131,072 slots the expected
+number of attempts is `1 / (1 − fill)`: under two attempts below 50% full,
+about five at 80%. Collisions only matter in a list's final few percent, and
+the retry cap handles exactly that tail: when 10 consecutive draws all
+collide (roughly the low-90s percent fill), allocation rotates to a fresh
+list. The cost is abandoning a few percent of a list's tail capacity — and
+lists are effectively free (one S3 object, some table rows) — while a list
+retiring at ~93% full still carries an anonymity set of ~120,000 positions,
+so the privacy properties are unaffected.
+
 ### `POST /revoke`
 
 ```json

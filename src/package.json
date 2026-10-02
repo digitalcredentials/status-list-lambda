@@ -1,0 +1,23 @@
+{
+  "name": "status-list-lambda",
+  "version": "1.0.0",
+  "description": "Bitstring Status List endpoints: allocate, revoke, and serve",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/handlers.test.mjs"
+  },
+  "engines": {
+    "node": ">=24.0"
+  },
+  "dependencies": {
+    "@digitalbazaar/ed25519-signature-2020": "^5.4.0",
+    "@digitalbazaar/ed25519-verification-key-2020": "^4.2.0",
+    "@digitalbazaar/vc": "^7.3.0",
+    "@digitalcredentials/security-document-loader": "^9.0.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1127.0",
+    "@aws-sdk/client-s3": "^3.1127.0"
+  }
+}

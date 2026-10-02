@@ -1,0 +1,223 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Bitstring Status List service: allocates status positions, revokes them by
+  token, and serves the signed BitstringStatusListCredential per list.
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: status.lcw-sandbox.org
+    Description: Custom domain the status lists are served from.
+  HostedZoneId:
+    Type: String
+    Default: Z04250862QG6MQUAE24XV
+    Description: Route 53 hosted zone id for DomainName.
+  CertificateArn:
+    Type: String
+    Default: arn:aws:acm:us-east-1:747170788015:certificate/c63f6ba4-2630-4c4f-973f-4fd6436962f0
+    Description: ACM certificate covering DomainName (the *.lcw-sandbox.org wildcard).
+  IssuerSeed:
+    Type: String
+    NoEcho: true
+    Description: >
+      64 hex characters; the Ed25519 seed the status list credentials are
+      signed with (seed -> did:key, the same scheme as the sandbox issuer).
+  ApiKey:
+    Type: String
+    NoEcho: true
+    Description: Shared secret required in the x-api-key header of /allocate and /revoke.
+
+Globals:
+  Function:
+    Runtime: nodejs24.x
+    MemorySize: 512
+    # Cold starts derive the signing key and load JSON-LD contexts.
+    Timeout: 20
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref PositionsTable
+        BUCKET_NAME: !Ref ListsBucket
+        STATUS_BASE_URL: !Sub https://${DomainName}
+
+Resources:
+  StatusHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      # Browsers (e.g. verifiers running in the wallet) fetch status lists
+      # cross-origin.
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - '*'
+      Domain:
+        DomainName: !Ref DomainName
+        CertificateArn: !Ref CertificateArn
+        Route53:
+          HostedZoneId: !Ref HostedZoneId
+
+  # The published, signed BitstringStatusListCredentials, one object per list.
+  ListsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: dcc-status-lists
+
+  # One row per allocated position (listId + pos#<index>): its revocation
+  # token, whether it is revoked, and when. Per-list meta rows carry the
+  # allocation count that triggers starting the next list, and the meta/current
+  # row points at the list currently being allocated from.
+  PositionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: status-list-positions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: listId
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: token
+          AttributeType: S
+      KeySchema:
+        - AttributeName: listId
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # /revoke looks a position up by its revocation token.
+        - IndexName: by-token
+          KeySchema:
+            - AttributeName: token
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # POST /allocate: reserves a random position in the current list (starting
+  # the next list when one fills up), stores a revocation token for it, and
+  # returns the credentialStatus object plus the token.
+  AllocateFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: status-list-allocate
+      CodeUri: src/
+      Handler: allocate.lambdaHandler
+      Environment:
+        Variables:
+          ISSUER_SEED: !Ref IssuerSeed
+          API_KEY: !Ref ApiKey
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PositionsTable
+        # Starting a new list publishes its empty signed credential.
+        - S3CrudPolicy:
+            BucketName: !Ref ListsBucket
+      Events:
+        Allocate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref StatusHttpApi
+            Path: /allocate
+            Method: post
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: "es2022"
+        Format: "esm"
+        Platform: "node"
+        External:
+          - "@aws-sdk/*"
+        OutExtension:
+          - .js=.mjs
+        EntryPoints:
+          - allocate.mjs
+        Banner:
+          - js=import { createRequire } from 'module'; const require = createRequire(import.meta.url);
+
+  # POST /revoke: looks the revocation token up, sets the position's bit, and
+  # republishes the signed status list credential.
+  RevokeFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: status-list-revoke
+      CodeUri: src/
+      Handler: revoke.lambdaHandler
+      Environment:
+        Variables:
+          ISSUER_SEED: !Ref IssuerSeed
+          API_KEY: !Ref ApiKey
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PositionsTable
+        - S3CrudPolicy:
+            BucketName: !Ref ListsBucket
+      Events:
+        Revoke:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref StatusHttpApi
+            Path: /revoke
+            Method: post
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: "es2022"
+        Format: "esm"
+        Platform: "node"
+        External:
+          - "@aws-sdk/*"
+        OutExtension:
+          - .js=.mjs
+        EntryPoints:
+          - revoke.mjs
+        Banner:
+          - js=import { createRequire } from 'module'; const require = createRequire(import.meta.url);
+
+  # GET /{list_id}: the published, signed BitstringStatusListCredential.
+  GetListFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: status-list-get
+      CodeUri: src/
+      Handler: get.lambdaHandler
+      MemorySize: 256
+      Timeout: 10
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ListsBucket
+      Events:
+        GetList:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref StatusHttpApi
+            Path: /{list_id}
+            Method: get
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: "es2022"
+        Format: "esm"
+        Platform: "node"
+        External:
+          - "@aws-sdk/*"
+        OutExtension:
+          - .js=.mjs
+        EntryPoints:
+          - get.mjs
+        Banner:
+          - js=import { createRequire } from 'module'; const require = createRequire(import.meta.url);
+
+Outputs:
+  StatusListUrl:
+    Description: Base URL status lists are served from
+    Value: !Sub https://${DomainName}
+  ApiEndpoint:
+    Description: The HTTP API's own endpoint
+    Value: !Sub https://${StatusHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
